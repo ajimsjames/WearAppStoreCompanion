@@ -11,8 +11,8 @@ android {
         applicationId = "com.ajimsjames.wearappupdater"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -80,6 +80,9 @@ dependencies {
     // BouncyCastle for X.509 Certificate generation (matching libadb-android)
     implementation("org.bouncycastle:bcpkix-jdk15to18:1.81")
     implementation("org.bouncycastle:bcprov-jdk15to18:1.81")
+    
+    // Conscrypt for TLS 1.3 support on Android (required by libadb-android)
+    implementation("org.conscrypt:conscrypt-android:2.5.2")
     
     // Play Services Wearable for official Bluetooth / Data Layer Sync
     implementation("com.google.android.gms:play-services-wearable:18.1.0")

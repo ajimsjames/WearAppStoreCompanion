@@ -339,4 +339,27 @@ object AdbHelper {
             return false
         }
     }
+
+    fun runShellCommand(cmd: String): String {
+        val conn = activeConnection ?: return "Error: Not connected to ADB"
+        return try {
+            val stream = conn.open("shell:$cmd")
+            val outputBuilder = StringBuilder()
+            val buffer = ByteArray(1024)
+            try {
+                while (true) {
+                    val bytesRead = stream.read(buffer, 0, buffer.size)
+                    if (bytesRead == -1) break
+                    outputBuilder.append(String(buffer, 0, bytesRead))
+                }
+            } catch (e: Exception) {
+                // Ignore stream read exceptions on close
+            }
+            stream.close()
+            outputBuilder.toString()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to run shell command: $cmd", e)
+            "Error: ${e.localizedMessage}"
+        }
+    }
 }

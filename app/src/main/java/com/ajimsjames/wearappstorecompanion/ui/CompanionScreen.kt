@@ -72,7 +72,7 @@ fun CompanionScreen() {
     val scope = rememberCoroutineScope()
 
     var activeTab by remember { mutableStateOf(0) } // 0 = Store, 1 = File Manager
-    var useBluetoothSync by remember { mutableStateOf(true) } // Mode Toggle: Bluetooth (default) vs ADB
+    var useBluetoothSync by remember { mutableStateOf(false) } // Mode Toggle: Bluetooth vs ADB (defaulting to false)
 
     val appList = remember {
         listOf(
@@ -118,8 +118,17 @@ fun CompanionScreen() {
     var isUpdatingSelf by remember { mutableStateOf(false) }
     var selfUpdateProgressText by remember { mutableStateOf("") }
 
+    // Watch System Info State (Streamed via Bluetooth)
+    var watchModel by remember { mutableStateOf("Unknown Watch") }
+    var watchBattery by remember { mutableStateOf<Int?>(null) }
+    var watchCpu by remember { mutableStateOf<Int?>(null) }
+    var watchUsedMemory by remember { mutableStateOf<Long?>(null) }
+    var watchTotalMemory by remember { mutableStateOf<Long?>(null) }
+    var watchUsedStorage by remember { mutableStateOf<Long?>(null) }
+    var watchTotalStorage by remember { mutableStateOf<Long?>(null) }
+
     // File Manager state
-    var currentDirPath by remember { mutableStateOf("/sdcard") }
+    var currentDirPath by remember { mutableStateOf("/storage/emulated/0") }
     var fileList by remember { mutableStateOf<List<AdbHelper.WatchFile>>(emptyList()) }
     var isFileListLoading by remember { mutableStateOf(false) }
     var isUploadingFile by remember { mutableStateOf(false) }
@@ -172,6 +181,21 @@ fun CompanionScreen() {
                         }
                     }
                 }
+                "/system_info_response" -> {
+                    val jsonStr = String(messageEvent.data, Charsets.UTF_8)
+                    try {
+                        val obj = org.json.JSONObject(jsonStr)
+                        watchModel = obj.optString("model", "Unknown Watch")
+                        watchBattery = obj.optInt("battery", -1)
+                        watchCpu = obj.optInt("cpu", -1)
+                        watchTotalMemory = obj.optLong("totalMemory", -1L)
+                        watchUsedMemory = obj.optLong("totalMemory", 0L) - obj.optLong("freeMemory", 0L)
+                        watchTotalStorage = obj.optLong("totalStorage", -1L)
+                        watchUsedStorage = obj.optLong("totalStorage", 0L) - obj.optLong("freeStorage", 0L)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed parsing system info response", e)
+                    }
+                }
             }
         }
         messageClient.addListener(listener)
@@ -188,6 +212,8 @@ fun CompanionScreen() {
                 if (node != null) {
                     bluetoothWatchName = "Watch: ${node.displayName}"
                     isBluetoothWatchConnected = true
+                    // Request system info over Bluetooth
+                    WearBluetoothHelper.sendMessage(context, "/request_system_info", ByteArray(0))
                 } else {
                     bluetoothWatchName = "No Watch found over Bluetooth"
                     isBluetoothWatchConnected = false
@@ -410,40 +436,7 @@ fun CompanionScreen() {
                     .border(1.dp, Color(0xFF2C2C30), RoundedCornerShape(16.dp))
                     .padding(12.dp)
             ) {
-                // Connection Mode Tabs
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF0F0F10))
-                        .padding(2.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(if (useBluetoothSync) Color(0xFF2196F3) else Color.Transparent)
-                            .clickable { useBluetoothSync = true }
-                            .padding(vertical = 6.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("Bluetooth Sync", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                    }
 
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(if (!useBluetoothSync) Color(0xFF2196F3) else Color.Transparent)
-                            .clickable { useBluetoothSync = false }
-                            .padding(vertical = 6.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("ADB Debugging", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
 
                 if (useBluetoothSync) {
                     // Bluetooth Status
@@ -473,6 +466,98 @@ fun CompanionScreen() {
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold
                             )
+                        }
+                    }
+
+                    if (isBluetoothWatchConnected && watchBattery != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Watch Model: $watchModel",
+                            fontSize = 11.sp,
+                            color = Color(0xFFAAAAAA),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            val batteryVal = watchBattery ?: 0
+                            val batteryColor = when {
+                                batteryVal > 50 -> Color(0xFF4CAF50)
+                                batteryVal > 20 -> Color(0xFFFFC107)
+                                else -> Color(0xFFF44336)
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("🔋 Battery", fontSize = 11.sp, color = Color.White, modifier = Modifier.width(70.dp))
+                                androidx.compose.material3.LinearProgressIndicator(
+                                    progress = batteryVal.toFloat() / 100f,
+                                    color = batteryColor,
+                                    trackColor = Color(0xFF333336),
+                                    modifier = Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp))
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("$batteryVal%", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.width(35.dp), textAlign = TextAlign.End)
+                            }
+                            
+                            val cpuVal = watchCpu ?: 0
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("⚡ CPU Usage", fontSize = 11.sp, color = Color.White, modifier = Modifier.width(70.dp))
+                                androidx.compose.material3.LinearProgressIndicator(
+                                    progress = cpuVal.toFloat() / 100f,
+                                    color = Color(0xFFAB47BC),
+                                    trackColor = Color(0xFF333336),
+                                    modifier = Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp))
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("$cpuVal%", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.width(35.dp), textAlign = TextAlign.End)
+                            }
+
+                            val totalMem = watchTotalMemory ?: 1L
+                            val usedMem = watchUsedMemory ?: 0L
+                            val memProgress = if (totalMem > 0L) (usedMem.toFloat() / totalMem.toFloat()) else 0f
+                            val usedMemGb = String.format("%.2f", usedMem.toDouble() / (1024.0 * 1024.0 * 1024.0))
+                            val totalMemGb = String.format("%.2f", totalMem.toDouble() / (1024.0 * 1024.0 * 1024.0))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("💾 Memory", fontSize = 11.sp, color = Color.White, modifier = Modifier.width(70.dp))
+                                androidx.compose.material3.LinearProgressIndicator(
+                                    progress = memProgress.coerceIn(0f, 1f),
+                                    color = Color(0xFF29B6F6),
+                                    trackColor = Color(0xFF333336),
+                                    modifier = Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp))
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("${usedMemGb}G/${totalMemGb}G", fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.width(75.dp), textAlign = TextAlign.End)
+                            }
+
+                            val totalStore = watchTotalStorage ?: 1L
+                            val usedStore = watchUsedStorage ?: 0L
+                            val storeProgress = if (totalStore > 0L) (usedStore.toFloat() / totalStore.toFloat()) else 0f
+                            val usedStoreGb = String.format("%.1f", usedStore.toDouble() / (1024.0 * 1024.0 * 1024.0))
+                            val totalStoreGb = String.format("%.1f", totalStore.toDouble() / (1024.0 * 1024.0 * 1024.0))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("📂 Storage", fontSize = 11.sp, color = Color.White, modifier = Modifier.width(70.dp))
+                                androidx.compose.material3.LinearProgressIndicator(
+                                    progress = storeProgress.coerceIn(0f, 1f),
+                                    color = Color(0xFF26A69A),
+                                    trackColor = Color(0xFF333336),
+                                    modifier = Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp))
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("${usedStoreGb}G/${totalStoreGb}G", fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.width(75.dp), textAlign = TextAlign.End)
+                            }
                         }
                     }
                 } else {
