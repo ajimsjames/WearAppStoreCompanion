@@ -233,7 +233,6 @@ fun CompanionScreen() {
                     val url = URL("https://api.github.com/repos/ajimsjames/WearAppStoreCompanion/releases/latest")
                     val conn = url.openConnection() as HttpURLConnection
                     conn.setRequestProperty("Accept", "application/vnd.github.v3+json")
-                    conn.setRequestProperty("Authorization", "token $ghToken")
                     if (conn.responseCode == 200) {
                         val jsonStr = conn.inputStream.bufferedReader().use { it.readText() }
                         val jsonObj = JSONObject(jsonStr)
@@ -267,8 +266,6 @@ fun CompanionScreen() {
                             conn.connectTimeout = 8000
                             conn.readTimeout = 8000
                             conn.setRequestProperty("Accept", "application/vnd.github.v3+json")
-                            conn.setRequestProperty("Authorization", "token $ghToken")
-
                             if (conn.responseCode == 200) {
                                 val jsonStr = conn.inputStream.bufferedReader().use { it.readText() }
                                 val jsonObj = JSONObject(jsonStr)
@@ -1180,7 +1177,6 @@ private suspend fun performDownloadAndInstall(
         val conn = url.openConnection() as HttpURLConnection
         conn.connectTimeout = 10000
         conn.readTimeout = 10000
-        conn.setRequestProperty("Authorization", "token $ghToken")
         conn.connect()
         
         if (conn.responseCode != 200) {
