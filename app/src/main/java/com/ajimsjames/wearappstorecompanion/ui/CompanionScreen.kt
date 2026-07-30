@@ -6,6 +6,9 @@ import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import com.ajimsjames.wearappstorecompanion.R
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -47,11 +50,28 @@ import java.net.URL
 private const val TAG = "CompanionScreen"
 private val ghToken = "ghp_Vii083CFP" + "uYcZriV6hLd4cPGGvIXwA428UQa"
 
+fun isVersionNewer(remote: String, local: String): Boolean {
+    try {
+        val cleanRemote = remote.trim().removePrefix("v").split(".")
+        val cleanLocal = local.trim().removePrefix("v").split(".")
+        val length = maxOf(cleanRemote.size, cleanLocal.size)
+        for (i in 0 until length) {
+            val r = if (i < cleanRemote.size) cleanRemote[i].toIntOrNull() ?: 0 else 0
+            val l = if (i < cleanLocal.size) cleanLocal[i].toIntOrNull() ?: 0 else 0
+            if (r > l) return true
+            if (r < l) return false
+        }
+    } catch (e: Exception) {
+        return remote.compareTo(local) > 0
+    }
+    return false
+}
+
 data class WatchAppInfo(
     val name: String,
     val repo: String,
     val packageName: String,
-    val iconEmoji: String
+    val iconResId: Int
 )
 
 data class CompanionAppState(
@@ -62,7 +82,9 @@ data class CompanionAppState(
     var isChecking: Boolean = true,
     var isInstalling: Boolean = false,
     var progressText: String = "",
-    var statusText: String = "Checking..."
+    var statusText: String = "Checking...",
+    var isInstalled: Boolean = false,
+    var installedVersion: String? = null
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -76,17 +98,17 @@ fun CompanionScreen() {
 
     val appList = remember {
         listOf(
-            WatchAppInfo("WearAppUpdater", "ajimsjames/WearAppUpdater", "com.ajimsjames.wearappupdater", "🔄"),
-            WatchAppInfo("WearHealthSuite", "ajimsjames/WearHealthSuite", "com.ajimsjames.wearhealthsuite", "🏥"),
-            WatchAppInfo("WearBLEScanner", "ajimsjames/WearBLEScanner", "com.ajimsjames.wearblescanner", "📡"),
-            WatchAppInfo("WearBaroAlt", "ajimsjames/WearBaroAlt", "com.ajimsjames.wearbaroalt", "🎈"),
-            WatchAppInfo("WearFileServer", "ajimsjames/WearFileServer", "com.ajimsjames.wearfileserver", "⚡"),
-            WatchAppInfo("WearFileManager", "ajimsjames/WearOSFileManager", "com.ajimsjames.wearfilemanager", "📁"),
-            WatchAppInfo("WearDiagnostics", "ajimsjames/WearDiagnostics", "com.ajimsjames.weardiagnostics", "🩺"),
-            WatchAppInfo("WearMaps", "ajimsjames/WearMaps", "com.ajimsjames.wearmaps", "🗺️"),
-            WatchAppInfo("WearCompass", "ajimsjames/WearCompass", "com.ajimsjames.wearcompass", "🧭"),
-            WatchAppInfo("WearWifiTools", "ajimsjames/WearWifiTools", "com.ajimsjames.wearwifitools", "📶"),
-            WatchAppInfo("WearPDFReader", "ajimsjames/WearOSPDFReader", "com.ajimsjames.wearpdfreader", "📄")
+            WatchAppInfo("WearAppUpdater", "ajimsjames/WearAppUpdater", "com.ajimsjames.wearappupdater", R.drawable.ic_app_wearappupdater),
+            WatchAppInfo("WearHealthSuite", "ajimsjames/WearHealthSuite", "com.ajimsjames.wearhealthsuite", R.drawable.ic_app_wearhealthsuite),
+            WatchAppInfo("WearBLEScanner", "ajimsjames/WearBLEScanner", "com.ajimsjames.wearblescanner", R.drawable.ic_app_wearblescanner),
+            WatchAppInfo("WearBaroAlt", "ajimsjames/WearBaroAlt", "com.ajimsjames.wearbaroalt", R.drawable.ic_app_wearbaroalt),
+            WatchAppInfo("WearFileServer", "ajimsjames/WearFileServer", "com.ajimsjames.wearfileserver", R.drawable.ic_app_wearfileserver),
+            WatchAppInfo("WearFileManager", "ajimsjames/WearOSFileManager", "com.ajimsjames.wearfilemanager", R.drawable.ic_app_wearfilemanager),
+            WatchAppInfo("WearDiagnostics", "ajimsjames/WearDiagnostics", "com.ajimsjames.weardiagnostics", R.drawable.ic_app_weardiagnostics),
+            WatchAppInfo("WearMaps", "ajimsjames/WearMaps", "com.ajimsjames.wearmaps", R.drawable.ic_app_wearmaps),
+            WatchAppInfo("WearCompass", "ajimsjames/WearCompass", "com.ajimsjames.wearcompass", R.drawable.ic_app_wearcompass),
+            WatchAppInfo("WearWifiTools", "ajimsjames/WearWifiTools", "com.ajimsjames.wearwifitools", R.drawable.ic_app_wearwifitools),
+            WatchAppInfo("WearPDFReader", "ajimsjames/WearOSPDFReader", "com.ajimsjames.wearpdfreader", R.drawable.ic_app_wearpdfreader)
         )
     }
 
@@ -323,6 +345,36 @@ fun CompanionScreen() {
     // Trigger file list refresh on connection or directory change
     LaunchedEffect(isConnected, isBluetoothWatchConnected, currentDirPath, useBluetoothSync) {
         loadWatchFiles()
+    }
+
+    fun checkInstallationStates() {
+        if (!isConnected) return
+        scope.launch(Dispatchers.IO) {
+            val updatedStates = appStates.map { state ->
+                val checkPkg = AdbHelper.runShellCommand("pm list packages ${state.info.packageName}").trim()
+                val isInstalled = checkPkg.isNotEmpty() && checkPkg.contains(state.info.packageName)
+                var installedVer: String? = null
+                if (isInstalled) {
+                    val dumpsys = AdbHelper.runShellCommand("dumpsys package ${state.info.packageName}")
+                    val versionMatch = Regex("versionName=([^\\s]+)").find(dumpsys)
+                    installedVer = versionMatch?.groupValues?.get(1)?.trim()
+                }
+                state.copy(
+                    isInstalled = isInstalled,
+                    installedVersion = installedVer
+                )
+            }
+            withContext(Dispatchers.Main) {
+                appStates = updatedStates
+            }
+        }
+    }
+
+    // Trigger check on connection state change
+    LaunchedEffect(isConnected) {
+        if (isConnected) {
+            checkInstallationStates()
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -884,7 +936,11 @@ fun CompanionScreen() {
                                                 .background(Color(0xFF2C2C30)),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Text(appState.info.iconEmoji, fontSize = 20.sp)
+                                            Image(
+                                                painter = painterResource(id = appState.info.iconResId),
+                                                contentDescription = null,
+                                                modifier = Modifier.size(24.dp)
+                                            )
                                         }
 
                                         Spacer(modifier = Modifier.width(10.dp))
@@ -896,15 +952,32 @@ fun CompanionScreen() {
                                                 fontWeight = FontWeight.Bold,
                                                 color = Color.White
                                             )
+                                            val installStatusText = when {
+                                                !isConnected -> appState.statusText
+                                                !appState.isInstalled -> "Not Installed"
+                                                else -> {
+                                                    val localVer = appState.installedVersion ?: "Unknown"
+                                                    val remoteVer = appState.latestGitHubVersion
+                                                    if (remoteVer != null && remoteVer != "None" && isVersionNewer(remoteVer, localVer)) {
+                                                        "Installed (v$localVer) - Update Available!"
+                                                    } else {
+                                                        "Installed (v$localVer) - Up to date"
+                                                    }
+                                                }
+                                            }
                                             Text(
-                                                appState.statusText,
+                                                installStatusText,
                                                 fontSize = 11.sp,
-                                                color = Color.Gray,
+                                                color = if (installStatusText.contains("Update")) Color(0xFFFFC107) else Color.Gray,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                         }
                                     }
+
+                                    val isUpdate = appState.isInstalled && appState.latestGitHubVersion != null && 
+                                            appState.installedVersion != null && 
+                                            isVersionNewer(appState.latestGitHubVersion!!, appState.installedVersion!!)
 
                                     Button(
                                         onClick = {
@@ -931,19 +1004,84 @@ fun CompanionScreen() {
                                                             )
                                                         } else s
                                                     }
+                                                    checkInstallationStates()
                                                 }
                                             }
                                         },
                                         enabled = (if (useBluetoothSync) isBluetoothWatchConnected else isConnected) && !appState.isInstalling && appState.downloadUrl != null,
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = Color(0xFF4CAF50),
-                                            disabledContainerColor = Color(0xFF2E3D31)
+                                            containerColor = if (isUpdate) Color(0xFFFF9800) else Color(0xFF4CAF50),
+                                            disabledContainerColor = Color(0xFF2C2C2E)
                                         )
                                     ) {
                                         Text(
-                                            text = if (appState.isInstalling) "Installing..." else "Install",
+                                            text = when {
+                                                appState.isInstalling -> "Installing..."
+                                                isUpdate -> "Update"
+                                                else -> "Install"
+                                            },
                                             fontSize = 11.sp
                                         )
+                                    }
+                                }
+
+                                if (isConnected && appState.isInstalled && !appState.isInstalling) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        val isSpecialApp = appState.info.packageName == "com.ajimsjames.wearfilemanager" || 
+                                                           appState.info.packageName == "com.ajimsjames.wearpdfreader"
+                                        
+                                        if (isSpecialApp) {
+                                            Button(
+                                                onClick = {
+                                                    scope.launch(Dispatchers.IO) {
+                                                        appStates = appStates.map { s ->
+                                                            if (s.info.packageName == appState.info.packageName) {
+                                                                s.copy(statusText = "Granting permissions...")
+                                                            } else s
+                                                        }
+                                                        AdbHelper.runShellCommand("pm grant ${appState.info.packageName} android.permission.READ_EXTERNAL_STORAGE")
+                                                        AdbHelper.runShellCommand("pm grant ${appState.info.packageName} android.permission.WRITE_EXTERNAL_STORAGE")
+                                                        AdbHelper.runShellCommand("appops set ${appState.info.packageName} MANAGE_EXTERNAL_STORAGE allow")
+                                                        
+                                                        withContext(Dispatchers.Main) {
+                                                            appStates = appStates.map { s ->
+                                                                if (s.info.packageName == appState.info.packageName) {
+                                                                    s.copy(statusText = "Permissions Granted!")
+                                                                } else s
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                modifier = Modifier.weight(1.2f),
+                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3))
+                                            ) {
+                                                Text("Grant File Access", fontSize = 10.sp)
+                                            }
+                                        }
+
+                                        Button(
+                                            onClick = {
+                                                scope.launch(Dispatchers.IO) {
+                                                    appStates = appStates.map { s ->
+                                                        if (s.info.packageName == appState.info.packageName) {
+                                                            s.copy(statusText = "Uninstalling...")
+                                                        } else s
+                                                    }
+                                                    val res = AdbHelper.runShellCommand("pm uninstall ${appState.info.packageName}")
+                                                    withContext(Dispatchers.Main) {
+                                                        checkInstallationStates()
+                                                    }
+                                                }
+                                            },
+                                            modifier = Modifier.weight(0.8f),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE57373))
+                                        ) {
+                                            Text("Uninstall", fontSize = 10.sp)
+                                        }
                                     }
                                 }
 
