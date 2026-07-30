@@ -314,7 +314,7 @@ fun CompanionScreen() {
                         companionStatusText = "Could not check self updates (HTTP ${conn.responseCode})"
                     }
                 } catch (e: Exception) {
-                    companionStatusText = "Could not check self updates"
+                    companionStatusText = "Could not check self updates: ${e.localizedMessage}"
                 }
             }
 
@@ -354,7 +354,7 @@ fun CompanionScreen() {
                                 state.copy(isChecking = false, statusText = "API Error (${conn.responseCode})")
                             }
                         } catch (e: Exception) {
-                            state.copy(isChecking = false, statusText = "Failed check")
+                            state.copy(isChecking = false, statusText = "Error: ${e.localizedMessage}")
                         }
                     }
                 }.awaitAll()
