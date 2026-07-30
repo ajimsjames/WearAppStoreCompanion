@@ -667,6 +667,45 @@ fun CompanionScreen() {
                                         isPairing = true
                                         connectionStatus = "Pairing..."
                                         scope.launch(Dispatchers.IO) {
+                                            val pairingPortInt = pairingPortString.toIntOrNull() ?: 30000
+                                            val connectPortInt = portString.toIntOrNull() ?: 5555
+                                            sharedPref.edit()
+                                                .putString("watch_ip", ipAddress)
+                                                .putString("watch_pairing_port", pairingPortString)
+                                                .putString("watch_pairing_code", pairingCodeString)
+                                                .putString("watch_port", portString)
+                                                .apply()
+
+                                            var success = false
+                                            AdbHelper.pair(context, ipAddress, pairingPortInt, pairingCodeString) { status ->
+                                                connectionStatus = status
+                                                if (status.contains("successful")) {
+                                                    success = true
+                                                }
+                                            }
+
+                                            if (success) {
+                                                connectionStatus = "Pairing successful! Connecting to watch..."
+                                                Thread.sleep(1000)
+                                                val connectSuccess = AdbHelper.connect(context, ipAddress, connectPortInt) { status ->
+                                                    connectionStatus = status
+                                                }
+                                                isConnected = connectSuccess
+                                            }
+                                            isPairing = false
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
+                                    enabled = !isPairing && !isConnecting
+                                ) {
+                                    Text("Pair & Connect", fontSize = 11.sp)
+                                }
+
+                                Button(
+                                    onClick = {
+                                        isPairing = true
+                                        connectionStatus = "Pairing..."
+                                        scope.launch(Dispatchers.IO) {
                                             val portInt = pairingPortString.toIntOrNull() ?: 30000
                                             sharedPref.edit()
                                                 .putString("watch_ip", ipAddress)
