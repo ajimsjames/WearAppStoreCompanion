@@ -134,6 +134,14 @@ fun CompanionScreen() {
     var isBluetoothWatchConnected by remember { mutableStateOf(false) }
 
     // Self-update state
+    val currentCompanionVersion = remember {
+        try {
+            val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            pInfo.versionName ?: "1.0.0"
+        } catch (e: Exception) {
+            "1.1.3"
+        }
+    }
     var companionLatestVersion by remember { mutableStateOf<String?>(null) }
     var companionDownloadUrl by remember { mutableStateOf<String?>(null) }
     var companionStatusText by remember { mutableStateOf("Checking for companion updates...") }
@@ -245,9 +253,37 @@ fun CompanionScreen() {
         }
     }
 
+    fun checkInstallationStates() {
+        if (!isConnected) return
+        scope.launch(Dispatchers.IO) {
+            // Add a small delay to ensure the socket connection is fully established and stable
+            kotlinx.coroutines.delay(1000)
+            val updatedStates = appStates.map { state ->
+                val checkPkg = AdbHelper.runShellCommand("pm list packages ${state.info.packageName}").trim()
+                val isInstalled = checkPkg.isNotEmpty() && checkPkg.contains(state.info.packageName)
+                var installedVer: String? = null
+                if (isInstalled) {
+                    val dumpsys = AdbHelper.runShellCommand("dumpsys package ${state.info.packageName}")
+                    val versionMatch = Regex("versionName=([^\\s]+)").find(dumpsys)
+                    installedVer = versionMatch?.groupValues?.get(1)?.trim()
+                }
+                state.copy(
+                    isInstalled = isInstalled,
+                    installedVersion = installedVer
+                )
+            }
+            withContext(Dispatchers.Main) {
+                appStates = updatedStates
+            }
+        }
+    }
+
     fun refreshVersions() {
         scope.launch {
             appStates = appStates.map { it.copy(isChecking = true, statusText = "Checking GitHub...") }
+            
+            // Check watch apps installation too
+            checkInstallationStates()
             
             // Check self updates
             launch(Dispatchers.IO) {
@@ -269,9 +305,13 @@ fun CompanionScreen() {
                         }
                         companionLatestVersion = tagName
                         companionDownloadUrl = dUrl
-                        companionStatusText = "Latest available version: $tagName"
+                        if (isVersionNewer(tagName, currentCompanionVersion)) {
+                            companionStatusText = "Update available: $tagName (Current: v$currentCompanionVersion)"
+                        } else {
+                            companionStatusText = "Companion App is up-to-date (v$currentCompanionVersion)"
+                        }
                     } else {
-                        companionStatusText = "Could not check self updates"
+                        companionStatusText = "Could not check self updates (HTTP ${conn.responseCode})"
                     }
                 } catch (e: Exception) {
                     companionStatusText = "Could not check self updates"
@@ -347,28 +387,7 @@ fun CompanionScreen() {
         loadWatchFiles()
     }
 
-    fun checkInstallationStates() {
-        if (!isConnected) return
-        scope.launch(Dispatchers.IO) {
-            val updatedStates = appStates.map { state ->
-                val checkPkg = AdbHelper.runShellCommand("pm list packages ${state.info.packageName}").trim()
-                val isInstalled = checkPkg.isNotEmpty() && checkPkg.contains(state.info.packageName)
-                var installedVer: String? = null
-                if (isInstalled) {
-                    val dumpsys = AdbHelper.runShellCommand("dumpsys package ${state.info.packageName}")
-                    val versionMatch = Regex("versionName=([^\\s]+)").find(dumpsys)
-                    installedVer = versionMatch?.groupValues?.get(1)?.trim()
-                }
-                state.copy(
-                    isInstalled = isInstalled,
-                    installedVersion = installedVer
-                )
-            }
-            withContext(Dispatchers.Main) {
-                appStates = updatedStates
-            }
-        }
-    }
+
 
     // Trigger check on connection state change
     LaunchedEffect(isConnected) {
@@ -853,24 +872,24 @@ fun CompanionScreen() {
                                     )
                                 }
 
-                                companionDownloadUrl?.let { dUrl ->
-                                    Button(
-                                        onClick = {
-                                            isUpdatingSelf = true
-                                            selfUpdateProgressText = "Downloading update..."
-                                            scope.launch(Dispatchers.IO) {
-                                                performSelfUpdate(context, dUrl) { progress ->
-                                                    selfUpdateProgressText = progress
-                                                }
-                                                isUpdatingSelf = false
-                                            }
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3)),
-                                        enabled = !isUpdatingSelf
-                                    ) {
-                                        Text("Update App", fontSize = 11.sp)
-                                    }
-                                }
+                                if (companionLatestVersion != null && isVersionNewer(companionLatestVersion!!, currentCompanionVersion) && companionDownloadUrl != null) {
+                                     Button(
+                                         onClick = {
+                                             isUpdatingSelf = true
+                                             selfUpdateProgressText = "Downloading update..."
+                                             scope.launch(Dispatchers.IO) {
+                                                 performSelfUpdate(context, companionDownloadUrl!!) { progress ->
+                                                     selfUpdateProgressText = progress
+                                                 }
+                                                 isUpdatingSelf = false
+                                             }
+                                         },
+                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3)),
+                                         enabled = !isUpdatingSelf
+                                     ) {
+                                         Text("Update App", fontSize = 11.sp)
+                                     }
+                                 }
                             }
                             AnimatedVisibility(visible = isUpdatingSelf) {
                                 Column(modifier = Modifier.padding(top = 8.dp)) {
